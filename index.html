@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CineVault</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0a0a0a;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', sans-serif;
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 20px 30px;
+      border-bottom: 1px solid #1e1e1e;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header h1 {
+      font-size: 1.5rem;
+      color: #e50914;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .status {
+      margin-left: auto;
+      font-size: 0.8rem;
+      color: #666;
+    }
+
+    main {
+      padding: 30px;
+    }
+
+    h2 {
+      font-size: 1.1rem;
+      color: #aaa;
+      margin-bottom: 20px;
+      font-weight: 400;
+    }
+
+    #movies-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 20px;
+    }
+
+    .movie-card {
+      background: #141414;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+      border: 1px solid #1e1e1e;
+    }
+
+    .movie-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(229, 9, 20, 0.2);
+      border-color: #e50914;
+    }
+
+    .movie-thumb {
+      width: 100%;
+      aspect-ratio: 2/3;
+      background: #1e1e1e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 3rem;
+    }
+
+    .movie-info {
+      padding: 12px;
+    }
+
+    .movie-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #e0e0e0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .movie-source {
+      font-size: 0.75rem;
+      color: #555;
+      margin-top: 4px;
+      text-transform: uppercase;
+    }
+
+    /* Player */
+    #player-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.95);
+      z-index: 100;
+      flex-direction: column;
+    }
+
+    #player-overlay.active {
+      display: flex;
+    }
+
+    #player-header {
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      border-bottom: 1px solid #1e1e1e;
+    }
+
+    #back-btn {
+      background: none;
+      border: 1px solid #333;
+      color: #e0e0e0;
+      padding: 6px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+
+    #back-btn:hover { border-color: #e50914; color: #e50914; }
+
+    #now-playing {
+      font-size: 1rem;
+      color: #aaa;
+    }
+
+    #video-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    #video-player {
+      width: 100%;
+      max-width: 960px;
+      max-height: 80vh;
+      background: #000;
+      border-radius: 8px;
+    }
+
+    /* Quality selector */
+    #quality-bar {
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-top: 1px solid #1e1e1e;
+    }
+
+    #quality-bar span { font-size: 0.85rem; color: #666; }
+
+    .quality-btn {
+      background: #1e1e1e;
+      border: 1px solid #333;
+      color: #aaa;
+      padding: 5px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+
+    .quality-btn:hover, .quality-btn.active {
+      background: #e50914;
+      border-color: #e50914;
+      color: #fff;
+    }
+
+    /* Loading & empty states */
+    #loading {
+      text-align: center;
+      padding: 60px;
+      color: #444;
+      font-size: 1rem;
+    }
+
+    #empty {
+      display: none;
+      text-align: center;
+      padding: 60px;
+      color: #444;
+    }
+
+    #empty p { font-size: 1rem; margin-bottom: 8px; }
+    #empty small { font-size: 0.8rem; color: #333; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🎬 CineVault</h1>
+  <span class="status" id="status">Loading...</span>
+</header>
+
+<main>
+  <h2>My Movies</h2>
+  <div id="loading">⏳ Fetching movies...</div>
+  <div id="empty">
+    <p>No movies found</p>
+    <small>Upload a movie to get started</small>
+  </div>
+  <div id="movies-grid"></div>
+</main>
+
+<!-- Player -->
+<div id="player-overlay">
+  <div id="player-header">
+    <button id="back-btn" onclick="closePlayer()">← Back</button>
+    <span id="now-playing">—</span>
+  </div>
+  <div id="video-container">
+    <video id="video-player" controls></video>
+  </div>
+  <div id="quality-bar">
+    <span>Quality:</span>
+    <button class="quality-btn" onclick="setQuality('480p')">480p</button>
+    <button class="quality-btn active" onclick="setQuality('720p')">720p</button>
+    <button class="quality-btn" onclick="setQuality('1080p')">1080p</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script>
+  const WORKER = 'https://movies-worker.ma68.workers.dev';
+  let hls = null;
+  let currentMovie = null;
+  let currentQuality = '720p';
+
+  // ─── Fetch movies ──────────────────────────────────────────
+  async function loadMovies() {
+    try {
+      const res = await fetch(`${WORKER}/movies`);
+      const movies = await res.json();
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('status').textContent = `${movies.length} movie(s)`;
+
+      if (movies.length === 0) {
+        document.getElementById('empty').style.display = 'block';
+        return;
+      }
+
+      const grid = document.getElementById('movies-grid');
+      movies.forEach(movie => {
+        const card = document.createElement('div');
+        card.className = 'movie-card';
+        card.innerHTML = `
+          <div class="movie-thumb">🎥</div>
+          <div class="movie-info">
+            <div class="movie-title">${movie.title}</div>
+            <div class="movie-source">B2 Storage</div>
+          </div>
+        `;
+        card.onclick = () => playMovie(movie);
+        grid.appendChild(card);
+      });
+
+    } catch (e) {
+      document.getElementById('loading').textContent = '❌ Failed to load movies';
+      document.getElementById('status').textContent = 'Error';
+    }
+  }
+
+  // ─── Play movie ────────────────────────────────────────────
+  function playMovie(movie) {
+    currentMovie = movie;
+    document.getElementById('now-playing').textContent = movie.title;
+    document.getElementById('player-overlay').classList.add('active');
+
+    // Restore saved position
+    const saved = localStorage.getItem(`pos_${movie.id}`);
+
+    loadStream(currentQuality, saved ? parseFloat(saved) : 0);
+  }
+
+  function loadStream(quality, seekTo = 0) {
+    const video = document.getElementById('video-player');
+    const streamUrl = currentMovie.master;
+
+    // Update quality buttons
+    document.querySelectorAll('.quality-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.textContent === quality);
+    });
+
+    if (hls) { hls.destroy(); hls = null; }
+
+    if (Hls.isSupported()) {
+      hls = new Hls();
+      hls.loadSource(streamUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (seekTo > 0) video.currentTime = seekTo;
+        video.play();
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = streamUrl;
+      video.addEventListener('loadedmetadata', () => {
+        if (seekTo > 0) video.currentTime = seekTo;
+        video.play();
+      });
+    }
+
+    // Save position every 5 seconds
+    video.ontimeupdate = () => {
+      if (currentMovie && video.currentTime > 5) {
+        localStorage.setItem(`pos_${currentMovie.id}`, video.currentTime);
+      }
+    };
+  }
+
+  function setQuality(quality) {
+    currentQuality = quality;
+    const video = document.getElementById('video-player');
+    const pos = video.currentTime;
+    loadStream(quality, pos);
+  }
+
+  function closePlayer() {
+    const video = document.getElementById('video-player');
+    video.pause();
+    if (hls) { hls.destroy(); hls = null; }
+    document.getElementById('player-overlay').classList.remove('active');
+  }
+
+  loadMovies();
+</script>
+</body>
+</html>
