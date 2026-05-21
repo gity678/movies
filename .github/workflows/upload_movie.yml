@@ -1,0 +1,140 @@
+name: 🎬 Upload Movie
+on:
+  workflow_dispatch:
+    inputs:
+      movie_url:
+        description: 'رابط الفيلم'
+        required: true
+        type: string
+      movie_name:
+        description: 'اسم الفيلم'
+        required: true
+        type: string
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg python3-pip
+          pip install yt-dlp boto3
+
+      - name: Download & Convert & Upload
+        env:
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          B2_APP_KEY: ${{ secrets.B2_APP_KEY }}
+          B2_BUCKET: ${{ secrets.B2_BUCKET }}
+          B2_ENDPOINT: ${{ secrets.B2_ENDPOINT }}
+        run: |
+          python3 - <<'EOF'
+          import os, subprocess, boto3, glob
+          from botocore.client import Config
+
+          MOVIE_URL  = "${{ github.event.inputs.movie_url }}"
+          RAW_NAME   = "${{ github.event.inputs.movie_name }}"
+          CLEAN_NAME = RAW_NAME.strip().replace(" ", "_")
+
+          B2_KEY_ID   = os.environ["B2_KEY_ID"]
+          B2_APP_KEY  = os.environ["B2_APP_KEY"]
+          B2_BUCKET   = os.environ["B2_BUCKET"]
+          B2_ENDPOINT = os.environ["B2_ENDPOINT"]
+
+          WORK_DIR = f"/tmp/{CLEAN_NAME}"
+          os.makedirs(WORK_DIR, exist_ok=True)
+          RAW_FILE = f"{WORK_DIR}/raw.mp4"
+
+          # ─── تحميل الفيلم ───────────────────────────────────────────
+          print("⏳ جاري تحميل الفيلم...")
+          result = subprocess.run([
+              "yt-dlp",
+              "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+              "--merge-output-format", "mp4",
+              "-o", RAW_FILE,
+              MOVIE_URL
+          ], capture_output=True, text=True)
+
+          if result.returncode != 0:
+              print("❌ فشل التحميل:")
+              print(result.stderr)
+              exit(1)
+
+          print(f"✅ تم التحميل: {RAW_FILE}")
+
+          # ─── التحويل إلى HLS بثلاث جودات ───────────────────────────
+          QUALITIES = [
+              {"name": "480p",  "res": "854:480",  "bitrate": "1000k", "audio": "128k"},
+              {"name": "720p",  "res": "1280:720", "bitrate": "2800k", "audio": "128k"},
+              {"name": "1080p", "res": "1920:1080","bitrate": "5000k", "audio": "192k"},
+          ]
+
+          for q in QUALITIES:
+              out_dir = f"{WORK_DIR}/{q['name']}"
+              os.makedirs(out_dir, exist_ok=True)
+              print(f"⚙️ جاري التحويل إلى {q['name']}...")
+              r = subprocess.run([
+                  "ffmpeg", "-i", RAW_FILE,
+                  "-vf", f"scale={q['res']}",
+                  "-c:v", "libx264", "-b:v", q["bitrate"],
+                  "-c:a", "aac", "-b:a", q["audio"],
+                  "-hls_time", "10",
+                  "-hls_playlist_type", "vod",
+                  "-hls_segment_filename", f"{out_dir}/segment_%03d.ts",
+                  f"{out_dir}/index.m3u8"
+              ], capture_output=True, text=True)
+
+              if r.returncode != 0:
+                  print(f"❌ فشل التحويل إلى {q['name']}:")
+                  print(r.stderr)
+                  exit(1)
+
+              print(f"✅ تم التحويل إلى {q['name']}")
+
+          # ─── إنشاء ملف master.m3u8 ──────────────────────────────────
+          MASTER_PATH = f"{WORK_DIR}/master.m3u8"
+          B2_BASE_URL = f"https://{B2_ENDPOINT}/{B2_BUCKET}/movies/{CLEAN_NAME}"
+
+          with open(MASTER_PATH, "w") as f:
+              f.write("#EXTM3U\n")
+              f.write("#EXT-X-VERSION:3\n\n")
+              f.write(f'#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=854x480\n{B2_BASE_URL}/480p/index.m3u8\n\n')
+              f.write(f'#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720\n{B2_BASE_URL}/720p/index.m3u8\n\n')
+              f.write(f'#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\n{B2_BASE_URL}/1080p/index.m3u8\n')
+
+          print("✅ تم إنشاء master.m3u8")
+
+          # ─── الرفع إلى Backblaze B2 ──────────────────────────────────
+          print("☁️ جاري الرفع إلى Backblaze B2...")
+
+          s3 = boto3.client(
+              "s3",
+              endpoint_url=f"https://{B2_ENDPOINT}",
+              aws_access_key_id=B2_KEY_ID,
+              aws_secret_access_key=B2_APP_KEY,
+              config=Config(signature_version="s3v4")
+          )
+
+          def upload_file(local_path, b2_key, content_type):
+              s3.upload_file(
+                  local_path, B2_BUCKET, b2_key,
+                  ExtraArgs={"ContentType": content_type}
+              )
+              print(f"  ✅ {b2_key}")
+
+          # رفع master.m3u8
+          upload_file(MASTER_PATH, f"movies/{CLEAN_NAME}/master.m3u8", "application/vnd.apple.mpegurl")
+
+          # رفع ملفات كل جودة
+          for q in QUALITIES:
+              q_dir = f"{WORK_DIR}/{q['name']}"
+              upload_file(f"{q_dir}/index.m3u8", f"movies/{CLEAN_NAME}/{q['name']}/index.m3u8", "application/vnd.apple.mpegurl")
+              for ts_file in sorted(glob.glob(f"{q_dir}/segment_*.ts")):
+                  fname = os.path.basename(ts_file)
+                  upload_file(ts_file, f"movies/{CLEAN_NAME}/{q['name']}/{fname}", "video/mp2t")
+
+          print(f"\n🎉 تم الرفع بنجاح!")
+          print(f"🔗 master.m3u8: {B2_BASE_URL}/master.m3u8")
+          EOF
