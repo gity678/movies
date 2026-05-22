@@ -1,4 +1,4 @@
-const ALLOWED = 'https://filmyy.pages.dev';
+const ALLOWED = 'https://filmyy7.pages.dev';
 const HEADERS = {
   'Access-Control-Allow-Origin': ALLOWED,
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
